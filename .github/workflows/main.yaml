@@ -1,0 +1,61 @@
+name: main
+on:
+  push:
+    branches:
+      - master
+      - main
+
+jobs:
+  build:
+    runs-on: [self-hosted]
+    if: contains(github.event.head_commit.message, '#build') || contains(github.event.head_commit.message, '#build&deploy')
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: build-docker-image
+        run: |-
+          docker build -t deploymentmanager:latest .
+          docker image tag pg:latest registry.local/infra/deploymentmanager:latest
+          docker image push registry.local/infra/deploymentmanager:latest
+  deploy:
+    runs-on: [self-hosted]
+    if: contains(github.event.head_commit.message, '#deploy')
+    env:
+      KUBECONFIG: kube.conf
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: deploy
+        run: |-
+          kubectl apply -f deployment.yaml
+          kubectl -n infra rollout restart deployment deploymentmanager
+  build-deploy:
+    runs-on: [self-hosted]
+    if: contains(github.event.head_commit.message, '#build&deploy')
+    needs: [build]
+    env:
+      KUBECONFIG: kube.conf
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: deploy
+        run: |-
+          kubectl apply -f deployment.yaml
+          kubectl -n prod rollout restart deployment deploymentmanager
+
+  cleanup:
+    runs-on: [self-hosted]
+    needs: [build, build-deploy, deploy]
+    if: ${{ always() }}
+    steps:
+      - name: Cleanup
+        if: ${{ always() }}
+        run: |
+          echo "Cleaning up"
+          rm -rf "${{ github.workspace }}"
